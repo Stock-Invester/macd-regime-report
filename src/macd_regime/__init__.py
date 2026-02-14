@@ -1,1 +1,4 @@
-__all__ = ["cli", "engine", "parser", "indicators", "data_sources", "models"]
+"""MACD regime report package."""
+
+__all__ = ["__version__"]
+__version__ = "0.1.0"

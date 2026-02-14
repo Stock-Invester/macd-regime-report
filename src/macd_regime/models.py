@@ -1,50 +1,33 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field, asdict
-from typing import Literal
-
-Position = Literal["IN", "OUT"]
-Action = Literal["BUY", "SELL", "HOLD", "WAIT"]
+from typing import Any
 
 
 @dataclass
-class SignalRule:
-    timeframe: str
-    signal: str
+class SignalSpec:
+    kind: str
     direction: str | None = None
 
 
 @dataclass
-class EntryRule(SignalRule):
-    confirm: list[str] = field(default_factory=list)
-
-
-@dataclass
-class ExitRule(SignalRule):
+class RuleSide:
+    timeframe: str
+    signal: SignalSpec
     gate: list[str] = field(default_factory=list)
+    confirm: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass
 class TickerRule:
     ticker: str
-    raw_result: str
-    entry: EntryRule
-    exit: ExitRule
+    raw_text: str
+    entry: RuleSide
+    exit: RuleSide
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
 
-@dataclass
-class EvalResult:
-    ticker: str
-    entry_tf: str
-    entry_pass: bool
-    exit_tf: str
-    exit_pass: bool
-    spx_gate: bool
-    prev_pos: Position
-    new_pos: Position
-    action: Action
-    notes: str
-    updated_at: str
+DEFAULT_ENTRY_SIGNAL = SignalSpec(kind="macd_state", direction="macd_above_signal")
+DEFAULT_EXIT_SIGNAL = SignalSpec(kind="macd_state", direction="macd_below_signal")

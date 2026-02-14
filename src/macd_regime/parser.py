@@ -3,93 +3,94 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-import yaml
 
-from .models import EntryRule, ExitRule, TickerRule
+from .models import (
+    DEFAULT_ENTRY_SIGNAL,
+    DEFAULT_EXIT_SIGNAL,
+    RuleSide,
+    SignalSpec,
+    TickerRule,
+)
 
-DEFAULT_ENTRY_SIGNAL = "macd_state"
-DEFAULT_EXIT_SIGNAL = "macd_state"
-DEFAULT_ENTRY_DIRECTION = "macd_above_signal"
-DEFAULT_EXIT_DIRECTION = "macd_below_signal"
-
-
-def _extract_tf(text: str, keyword: str) -> str:
-    m = re.search(rf"{keyword}\s*\((\d+)달봉\)", text)
-    if m:
-        return f"{int(m.group(1))}M"
-    return "1M"
+_ENTRY_RE = re.compile(r"매수\s*\((\d+)\s*달봉\)")
+_EXIT_RE = re.compile(r"매도\s*\((\d+)\s*달봉\)")
+_ZQ_TF_RE = re.compile(r"(\d+)\s*달봉\s*ZQ")
 
 
-def _extract_zq_tf(text: str, fallback_tf: str) -> str:
-    m = re.search(r"(\d+)달봉\s*ZQ", text)
-    if m:
-        return f"{int(m.group(1))}M"
-    return fallback_tf
+def _to_tf(months: int) -> str:
+    return f"{months}M"
 
 
-def build_rule_from_result(ticker: str, result_text: str) -> TickerRule:
-    normalized = result_text.replace("중국", "")
-    entry_tf = _extract_tf(normalized, "매수")
-    exit_tf = _extract_tf(normalized, "매도")
+def parse_rule_text(ticker: str, text: str) -> TickerRule:
+    cleaned = text.replace("중국", "")
 
-    entry = EntryRule(
-        timeframe=entry_tf,
-        signal=DEFAULT_ENTRY_SIGNAL,
-        direction=DEFAULT_ENTRY_DIRECTION,
-        confirm=[],
+    entry_m = _ENTRY_RE.search(cleaned)
+    exit_m = _EXIT_RE.search(cleaned)
+    entry_tf = _to_tf(int(entry_m.group(1))) if entry_m else "1M"
+    exit_tf = _to_tf(int(exit_m.group(1))) if exit_m else "1M"
+
+    has_osc = "오실" in cleaned
+    has_gate = any(keyword in cleaned for keyword in ["침체", "금리인하", "SPX 기준"])
+    has_zq = "ZQ" in cleaned
+
+    entry_signal = DEFAULT_ENTRY_SIGNAL
+    exit_signal = DEFAULT_EXIT_SIGNAL
+    if has_osc:
+        entry_signal = SignalSpec(kind="macd_hist_delta", direction="increasing")
+        exit_signal = SignalSpec(kind="macd_hist_delta", direction="decreasing")
+
+    entry_confirm: list[dict] = []
+    if has_zq:
+        zq_match = _ZQ_TF_RE.search(cleaned)
+        zq_tf = _to_tf(int(zq_match.group(1))) if zq_match else entry_tf
+        entry_confirm.append({"kind": "zqzmom_delta_positive", "timeframe": zq_tf})
+
+    exit_gate = ["SPX_GATE_ON"] if has_gate else []
+
+    return TickerRule(
+        ticker=ticker,
+        raw_text=text,
+        entry=RuleSide(timeframe=entry_tf, signal=entry_signal, confirm=entry_confirm),
+        exit=RuleSide(timeframe=exit_tf, signal=exit_signal, gate=exit_gate),
     )
-    exit_rule = ExitRule(
-        timeframe=exit_tf,
-        signal=DEFAULT_EXIT_SIGNAL,
-        direction=DEFAULT_EXIT_DIRECTION,
-        gate=[],
-    )
-
-    if "오실" in normalized:
-        entry.signal = "hist_delta"
-        entry.direction = "positive"
-        exit_rule.signal = "hist_delta"
-        exit_rule.direction = "negative"
-
-    if any(tok in normalized for tok in ["침체", "금리인하", "SPX 기준"]):
-        exit_rule.gate.append("SPX_GATE_ON")
-
-    if "ZQ" in normalized:
-        zq_tf = _extract_zq_tf(normalized, entry_tf)
-        entry.confirm.append(f"zqzmom_delta_positive:{zq_tf}")
-
-    return TickerRule(ticker=ticker, raw_result=result_text, entry=entry, exit=exit_rule)
 
 
-def build_rules(ticker_results: list[tuple[str, str]]) -> list[TickerRule]:
-    return [build_rule_from_result(t, r) for t, r in ticker_results]
+def parse_bulk_rules(rows: list[tuple[str, str]]) -> list[TickerRule]:
+    return [parse_rule_text(ticker=t, text=s) for t, s in rows]
 
 
-def save_rules_yaml(rules: list[TickerRule], out_path: str | Path) -> None:
-    path = Path(out_path)
-    data = {
+def write_rules_yaml(rules: list[TickerRule], output_path: str | Path) -> None:
+    import yaml
+
+    payload = {
         "schema_version": 1,
-        "defaults": {
-            "entry_signal": {"signal": DEFAULT_ENTRY_SIGNAL, "direction": DEFAULT_ENTRY_DIRECTION},
-            "exit_signal": {"signal": DEFAULT_EXIT_SIGNAL, "direction": DEFAULT_EXIT_DIRECTION},
-        },
         "rules": [r.to_dict() for r in rules],
     }
-    path.write_text(yaml.safe_dump(data, allow_unicode=True, sort_keys=False), encoding="utf-8")
+    Path(output_path).write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
 
 
 def load_rules_yaml(path: str | Path) -> list[TickerRule]:
+    import yaml
+
     raw = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
     out: list[TickerRule] = []
-    for row in raw.get("rules", []):
-        entry = EntryRule(**row["entry"])
-        exit_rule = ExitRule(**row["exit"])
+    for item in raw.get("rules", []):
         out.append(
             TickerRule(
-                ticker=row["ticker"],
-                raw_result=row.get("raw_result", ""),
-                entry=entry,
-                exit=exit_rule,
+                ticker=item["ticker"],
+                raw_text=item.get("raw_text", ""),
+                entry=RuleSide(
+                    timeframe=item["entry"]["timeframe"],
+                    signal=SignalSpec(**item["entry"]["signal"]),
+                    gate=item["entry"].get("gate", []),
+                    confirm=item["entry"].get("confirm", []),
+                ),
+                exit=RuleSide(
+                    timeframe=item["exit"]["timeframe"],
+                    signal=SignalSpec(**item["exit"]["signal"]),
+                    gate=item["exit"].get("gate", []),
+                    confirm=item["exit"].get("confirm", []),
+                ),
             )
         )
     return out

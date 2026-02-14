@@ -1,41 +1,79 @@
 # macd-regime-report
 
-Ticker + 결과 문자열을 `rules.yaml`로 자동 변환하고, 상태 머신(IN/OUT)을 기반으로 일일/수시 리포트를 생성하는 엔진입니다.
+상태 머신 기반 MACD 리포트 엔진 MVP입니다.
 
-## 구현 범위 (MVP)
-- 문자열 파싱 -> `rules.yaml` 생성
-- 임의 월봉(`1M~12M`) MACD/hist/ZQZMOM 계산
-- SPX 게이트(`^GSPC` 월봉 MACD + FRED DFEDTARU rate cut 이벤트)
-- 상태 저장(`state_store.csv`) 기반 상태 머신
-- 결과 출력(`report.csv` + 콘솔 markdown table)
+## 구현 범위
+
+- `(Ticker, 결과 문자열)` 입력으로 `rules.yaml` 자동 생성
+- yfinance/FRED 데이터 기반 지표 평가
+- SPX 게이트(`SPX_1M_MACD < SIGNAL` AND `RATE_CUT_EVENT`) 계산
+- 종목별 IN/OUT 상태를 `state_store.json`에 저장/복원
+- 실행마다 `report.csv` + 콘솔 markdown 테이블 출력
+
+## rules.yaml 스키마(요약)
+
+```yaml
+schema_version: 1
+rules:
+  - ticker: AAPL
+    raw_text: "매수 (3달봉) ..."
+    entry:
+      timeframe: "3M"
+      signal:
+        kind: macd_state | macd_hist_delta
+        direction: macd_above_signal | increasing
+      gate: []
+      confirm:
+        - kind: zqzmom_delta_positive
+          timeframe: "1M"
+    exit:
+      timeframe: "1M"
+      signal:
+        kind: macd_state | macd_hist_delta
+        direction: macd_below_signal | decreasing
+      gate: [SPX_GATE_ON]
+      confirm: []
+```
 
 ## 설치
+
 ```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-export PYTHONPATH=src
+pip install -e .
 ```
 
-## 입력 포맷
-`Ticker`, `Result` 컬럼을 가진 CSV.
+## 사용법
 
-예:
+1) 입력 CSV 준비 (`Ticker,Result` 컬럼 필수)
+
 ```csv
 Ticker,Result
-AAPL,"매수 (3달봉), 매도 (1달봉), 오실, 침체, 1달봉 ZQ"
-MSFT,"매수 (2달봉), 매도 (1달봉), 금리인하"
+AAPL,"매수 (3달봉) / 매도 (1달봉) 침체 1달봉 ZQ"
+MSFT,"매수 (2달봉) 오실 / 매도 (1달봉) 금리인하"
 ```
 
-## 1) rules.yaml 생성
+2) 규칙 생성
+
 ```bash
-python run_report.py build-rules --input ticker_results.csv --out rules.yaml
+macd-regime build-rules --input-csv input.csv --output rules.yaml
 ```
 
-## 2) 리포트 실행
+3) 엔진 실행
+
 ```bash
-python run_report.py run-report --rules rules.yaml --state state_store.csv --out report.csv
+macd-regime run --rules rules.yaml --state state_store.json --report report.csv
 ```
+
+## 상태 머신 규칙
+
+- `ExitPass=True`이면 항상 `NewPos=OUT`
+- `PrevPos=OUT`은 `EntryPass=True`일 때만 `IN`으로 복귀
+- 그 외는 이전 상태 유지
+- 액션 매핑
+  - OUT->IN: BUY
+  - IN->OUT: SELL
+  - IN->IN: HOLD
+  - OUT->OUT: WAIT
+
 
 ## 상태 머신 규칙
 - `ExitPass=True` -> 무조건 `OUT`
