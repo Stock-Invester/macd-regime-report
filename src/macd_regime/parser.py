@@ -60,19 +60,34 @@ def parse_bulk_rules(rows: list[tuple[str, str]]) -> list[TickerRule]:
 
 
 def write_rules_yaml(rules: list[TickerRule], output_path: str | Path) -> None:
-    import yaml
-
     payload = {
         "schema_version": 1,
         "rules": [r.to_dict() for r in rules],
     }
-    Path(output_path).write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
+
+    try:
+        import yaml  # type: ignore
+
+        serialized = yaml.safe_dump(payload, sort_keys=False)
+    except ModuleNotFoundError:
+        import json
+
+        serialized = json.dumps(payload, ensure_ascii=False, indent=2)
+
+    Path(output_path).write_text(serialized, encoding="utf-8")
 
 
 def load_rules_yaml(path: str | Path) -> list[TickerRule]:
-    import yaml
+    text = Path(path).read_text(encoding="utf-8")
+    try:
+        import yaml  # type: ignore
 
-    raw = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
+        raw = yaml.safe_load(text)
+    except ModuleNotFoundError:
+        import json
+
+        raw = json.loads(text)
+
     out: list[TickerRule] = []
     for item in raw.get("rules", []):
         out.append(
@@ -94,3 +109,33 @@ def load_rules_yaml(path: str | Path) -> list[TickerRule]:
             )
         )
     return out
+
+
+class _LegacySide:
+    def __init__(self, timeframe: str, signal: str, gate: list[str], confirm: list[str]) -> None:
+        self.timeframe = timeframe
+        self.signal = signal
+        self.gate = gate
+        self.confirm = confirm
+
+
+class _LegacyRule:
+    def __init__(self, ticker: str, raw_text: str, entry: _LegacySide, exit: _LegacySide) -> None:
+        self.ticker = ticker
+        self.raw_text = raw_text
+        self.entry = entry
+        self.exit = exit
+
+
+def build_rule_from_result(ticker: str, text: str):
+    """Backward-compatible parser API used by older tests/callers."""
+    parsed = parse_rule_text(ticker, text)
+    entry_signal = "hist_delta" if parsed.entry.signal.kind == "macd_hist_delta" else parsed.entry.signal.kind
+    exit_signal = "hist_delta" if parsed.exit.signal.kind == "macd_hist_delta" else parsed.exit.signal.kind
+    entry_confirm = [f"{c['kind']}:{c.get('timeframe', parsed.entry.timeframe)}" for c in parsed.entry.confirm]
+    return _LegacyRule(
+        ticker=parsed.ticker,
+        raw_text=parsed.raw_text,
+        entry=_LegacySide(parsed.entry.timeframe, entry_signal, parsed.entry.gate, entry_confirm),
+        exit=_LegacySide(parsed.exit.timeframe, exit_signal, parsed.exit.gate, []),
+    )

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import json
 from pathlib import Path
 
@@ -11,9 +12,25 @@ class StateStore:
     def load(self) -> dict[str, str]:
         if not self.path.exists():
             return {}
+        if self.path.suffix.lower() == ".csv":
+            out: dict[str, str] = {}
+            with self.path.open(newline="", encoding="utf-8") as f:
+                for row in csv.DictReader(f):
+                    ticker = row.get("Ticker")
+                    pos = row.get("Position")
+                    if ticker and pos:
+                        out[ticker] = pos
+            return out
         return json.loads(self.path.read_text(encoding="utf-8"))
 
     def save(self, state: dict[str, str]) -> None:
+        if self.path.suffix.lower() == ".csv":
+            with self.path.open("w", newline="", encoding="utf-8") as f:
+                writer = csv.DictWriter(f, fieldnames=["Ticker", "Position"])
+                writer.writeheader()
+                for ticker, pos in state.items():
+                    writer.writerow({"Ticker": ticker, "Position": pos})
+            return
         self.path.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
