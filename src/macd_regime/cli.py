@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 import csv
 
-from .engine import run_engine
 from .parser import load_rules_yaml, parse_bulk_rules, write_rules_yaml
 
 
@@ -37,6 +36,8 @@ def main() -> None:
         write_rules_yaml(rules, args.output)
         print(f"wrote {len(rules)} rules to {args.output}")
     elif args.cmd == "run":
+        from .engine import run_engine
+
         rules = load_rules_yaml(args.rules)
         run_engine(rules=rules, state_path=args.state, report_csv_path=args.report)
 
