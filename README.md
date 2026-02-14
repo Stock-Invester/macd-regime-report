@@ -67,8 +67,28 @@ macd-regime run --rules rules.yaml --state state_store.json --report report.csv
 
 - `ExitPass=True`이면 항상 `NewPos=OUT`
 - `PrevPos=OUT`은 `EntryPass=True`일 때만 `IN`으로 복귀
+- 그 외는 이전 상태 유지
 - 액션 매핑
   - OUT->IN: BUY
   - IN->OUT: SELL
   - IN->IN: HOLD
   - OUT->OUT: WAIT
+
+
+## 상태 머신 규칙
+- `ExitPass=True` -> 무조건 `OUT`
+- `PrevPos=OUT`이면 `EntryPass=True`일 때만 `IN` 복귀
+- 그 외는 이전 상태 유지
+
+액션 매핑:
+- OUT->IN = BUY
+- IN->OUT = SELL
+- IN->IN = HOLD
+- OUT->OUT = WAIT
+
+## 주요 파일
+- `src/macd_regime/parser.py`: 결과 문자열 -> 룰 파싱
+- `src/macd_regime/indicators.py`: MACD, histogram delta, ZQZMOM, k개월봉 리샘플링
+- `src/macd_regime/data_sources.py`: yfinance/FRED 로더
+- `src/macd_regime/engine.py`: SPX gate + 상태 머신 + report 생성
+- `src/macd_regime/cli.py`: CLI 엔트리포인트
